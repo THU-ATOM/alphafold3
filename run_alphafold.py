@@ -335,6 +335,25 @@ _NUM_DIFFUSION_SAMPLES = flags.DEFINE_integer(
     'Number of diffusion samples to generate.',
     lower_bound=1,
 )
+_DIFFUSION_ALGORITHM_NAME = flags.DEFINE_string(
+    'diffusion_algorithm_name',
+    'mid_point_ode',
+    'Diffusion sampling algorithm name. Examples: mid_point_ode, stomax, '
+    'stomax-1, stomax-2, markov, markov-1, markov-2.',
+)
+_DIFFUSION_TEMPERATURE_TYPE = flags.DEFINE_enum(
+    'diffusion_temperature_type',
+    default='exponential',
+    enum_values=['exponential', 'constant'],
+    help='Temperature schedule type used by stomax/markov samplers.',
+)
+_DIFFUSION_TEMP_INDEX = flags.DEFINE_float(
+    'diffusion_temp_index',
+    0.0,
+    'Temperature parameter used by stomax/markov samplers. When '
+    "diffusion_temperature_type='exponential'", this is the exponent k in "
+    'time**k. When temperature_type=constant, this is the constant multiplier.',
+)
 _NUM_SEEDS = flags.DEFINE_integer(
     'num_seeds',
     None,
@@ -374,6 +393,9 @@ def make_model_config(
     *,
     flash_attention_implementation: attention.Implementation = 'triton',
     num_diffusion_samples: int = 5,
+    diffusion_algorithm_name: str = 'mid_point_ode',
+    diffusion_temperature_type: str = 'exponential',
+    diffusion_temp_index: float = 0.0,
     num_recycles: int = 10,
     return_embeddings: bool = False,
     return_distogram: bool = False,
@@ -384,6 +406,11 @@ def make_model_config(
       flash_attention_implementation
   )
   config.heads.diffusion.eval.num_samples = num_diffusion_samples
+  config.heads.diffusion.eval.algorithm.name = diffusion_algorithm_name
+  config.heads.diffusion.eval.algorithm.temperature_type = (
+      diffusion_temperature_type
+  )
+  config.heads.diffusion.eval.algorithm.temp_index = diffusion_temp_index
   config.num_recycles = num_recycles
   config.return_embeddings = return_embeddings
   config.return_distogram = return_distogram
@@ -933,6 +960,9 @@ def main(_):
                 attention.Implementation, _FLASH_ATTENTION_IMPLEMENTATION.value
             ),
             num_diffusion_samples=_NUM_DIFFUSION_SAMPLES.value,
+            diffusion_algorithm_name=_DIFFUSION_ALGORITHM_NAME.value,
+            diffusion_temperature_type=_DIFFUSION_TEMPERATURE_TYPE.value,
+            diffusion_temp_index=_DIFFUSION_TEMP_INDEX.value,
             num_recycles=_NUM_RECYCLES.value,
             return_embeddings=_SAVE_EMBEDDINGS.value,
             return_distogram=_SAVE_DISTOGRAM.value,
