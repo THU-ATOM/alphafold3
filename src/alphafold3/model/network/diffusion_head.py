@@ -89,6 +89,12 @@ class ConditioningConfig(base_config.BaseConfig):
   prob: float
 
 
+class AlgorithmConfig(base_config.BaseConfig):
+  name: str = 'mid_point_ode'
+  temp_index: float = 0.0
+  temperature_type: str = 'exponential'
+
+
 class SampleConfig(base_config.BaseConfig):
   steps: int
   gamma_0: float = 0.8
@@ -96,6 +102,11 @@ class SampleConfig(base_config.BaseConfig):
   noise_scale: float = 1.003
   step_scale: float = 1.5
   num_samples: int = 1
+  algorithm: AlgorithmConfig = base_config.autocreate(
+      name='mid_point_ode',
+      temp_index=0.0,
+      temperature_type='exponential',
+  )
 
 
 class DiffusionHead(hk.Module):
@@ -321,28 +332,85 @@ def sample(
 
   mask = batch.predicted_structure_info.atom_mask
 
-  def apply_denoising_step(carry, noise_level):
+  alg_name = config.algorithm.name
+  temp_index = config.algorithm.temp_index
+  temperature_type = config.algorithm.temperature_type
+
+  def apply_denoising_step(carry, step):
     key, positions, noise_level_prev = carry
+    noise_level, step_idx = step
     key, key_noise, key_aug = jax.random.split(key, 3)
 
     positions = random_augmentation(
         rng_key=key_aug, positions=positions, mask=mask
     )
 
-    gamma = config.gamma_0 * (noise_level > config.gamma_min)
-    t_hat = noise_level_prev * (1 + gamma)
+    if alg_name == 'mid_point_ode':
+      gamma = config.gamma_0 * (noise_level > config.gamma_min)
+      t_hat = noise_level_prev * (1 + gamma)
 
-    noise_scale = config.noise_scale * jnp.sqrt(t_hat**2 - noise_level_prev**2)
-    noise = noise_scale * jax.random.normal(key_noise, positions.shape)
-    positions_noisy = positions + noise
+      noise_scale = config.noise_scale * jnp.sqrt(
+          jnp.maximum(0.0, t_hat**2 - noise_level_prev**2)
+      )
+      noise = noise_scale * jax.random.normal(key_noise, positions.shape)
+      positions_noisy = positions + noise
 
-    positions_denoised = denoising_step(positions_noisy, t_hat)
-    grad = (positions_noisy - positions_denoised) / t_hat
+      positions_denoised = denoising_step(positions_noisy, t_hat)
+      grad = (positions_noisy - positions_denoised) / t_hat
 
-    d_t = noise_level - t_hat
-    positions_out = positions_noisy + config.step_scale * d_t * grad
+      d_t = noise_level - t_hat
+      positions_out = positions_noisy + config.step_scale * d_t * grad
+      return (key, positions_out, noise_level), positions_out
 
-    return (key, positions_out, noise_level), positions_out
+    if ('stomax' in alg_name) or ('markov' in alg_name):
+      positions_noisy = positions
+      t_hat = noise_level_prev
+
+      positions_denoised = denoising_step(positions_noisy, t_hat)
+
+      if 'stomax' in alg_name:
+        gamma = 0.0
+      elif 'markov' in alg_name:
+        gamma = (noise_level**2) / noise_level_prev
+      else:
+        raise ValueError(f'Unknown sampling algorithm {alg_name}')
+
+      ratio = gamma / noise_level_prev
+      num_transitions = noise_levels.shape[0] - 1
+      time = 1.0 - ((step_idx - 1).astype(jnp.float32) / float(num_transitions))
+
+      if temperature_type == 'exponential':
+        temperature_term = time**temp_index
+      elif temperature_type == 'constant':
+        temperature_term = temp_index
+      else:
+        raise ValueError(
+            "Unknown temperature_type; expected 'exponential' or 'constant'"
+        )
+
+      if '-1' in alg_name:
+        var = 2.0 * noise_level_prev * (noise_level - gamma)
+      elif '-2' in alg_name:
+        var = 2.0 * noise_level * (noise_level - gamma)
+      else:
+        scale = jnp.sqrt(SIGMA_DATA**2 + noise_level**2) / jnp.sqrt(
+            SIGMA_DATA**2 + noise_level_prev**2
+        )
+        var = scale * 2.0 * noise_level_prev * (noise_level - gamma)
+
+      sigma = jnp.sqrt(jnp.maximum(0.0, var))
+      stochastic = (
+          temperature_term
+          * sigma
+          * jax.random.normal(key_noise, positions.shape)
+      )
+
+      positions_out = (
+          (1.0 - ratio) * positions_denoised + ratio * positions_noisy + stochastic
+      )
+      return (key, positions_out, noise_level), positions_out
+
+    raise ValueError(f'Unknown sampling algorithm {alg_name}')
 
   num_samples = config.num_samples
 
@@ -361,7 +429,11 @@ def sample(
   apply_denoising_step = hk.vmap(
       apply_denoising_step, in_axes=(0, None), split_rng=(not hk.running_init())
   )
-  result, _ = hk.scan(apply_denoising_step, init, noise_levels[1:], unroll=4)
+  steps = (
+      noise_levels[1:],
+      jnp.arange(1, config.steps + 1, dtype=jnp.int32),
+  )
+  result, _ = hk.scan(apply_denoising_step, init, steps, unroll=4)
   _, positions_out, _ = result
 
   final_dense_atom_mask = jnp.tile(mask[None], (num_samples, 1, 1))

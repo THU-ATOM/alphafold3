@@ -195,6 +195,11 @@
         "seq_channel": 384
       },
       "eval": {
+        "algorithm": {
+          "name": "mid_point_ode",
+          "temp_index": 0.0,
+          "temperature_type": "exponential"
+        },
         "gamma_0": 0.8,
         "gamma_min": 1.0,
         "noise_scale": 1.003,
