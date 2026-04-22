@@ -408,6 +408,10 @@ def sample(
       positions_out = (
           (1.0 - ratio) * positions_denoised + ratio * positions_noisy + stochastic
       )
+
+      positions_out = jnp.where(
+          step_idx == config.steps, positions_denoised, positions_out
+      )
       return (key, positions_out, noise_level), positions_out
 
     raise ValueError(f'Unknown sampling algorithm {alg_name}')
