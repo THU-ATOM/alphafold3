@@ -93,6 +93,7 @@ class AlgorithmConfig(base_config.BaseConfig):
   name: str = 'mid_point_ode'
   temp_index: float = 0.0
   temperature_type: str = 'exponential'
+  last_step_only_denoise: bool = True
 
 
 class SampleConfig(base_config.BaseConfig):
@@ -106,6 +107,7 @@ class SampleConfig(base_config.BaseConfig):
       name='mid_point_ode',
       temp_index=0.0,
       temperature_type='exponential',
+      last_step_only_denoise=True,
   )
 
 
@@ -409,9 +411,11 @@ def sample(
           (1.0 - ratio) * positions_denoised + ratio * positions_noisy + stochastic
       )
 
-      positions_out = jnp.where(
-          step_idx == config.steps, positions_denoised, positions_out
-      )
+      if config.algorithm.last_step_only_denoise:
+        positions_out = jnp.where(
+            step_idx == config.steps, positions_denoised, positions_out
+        )
+        jax.debug.print('Last step only denoise is enabled. step_idx={s}, total_steps={t}', s=step_idx, t=config.steps)
       return (key, positions_out, noise_level), positions_out
 
     raise ValueError(f'Unknown sampling algorithm {alg_name}')
