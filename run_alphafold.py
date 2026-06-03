@@ -352,6 +352,11 @@ _DIFFUSION_TEMP_INDEX = flags.DEFINE_float(
     0.0,
     'Temperature parameter used by stomax/markov samplers. When diffusion_temperature_type=exponential, this is the exponent k in time**k. When temperature_type=constant, this is the constant multiplier.',
 )
+_DIFFUSION_LAST_STEP_ONLY_DENOISE = flags.DEFINE_bool(
+  'diffusion_last_step_only_denoise',
+  True,
+  'If True, replace the final diffusion transition step with the pure denoised prediction (positions_denoised).',
+)
 _NUM_SEEDS = flags.DEFINE_integer(
     'num_seeds',
     None,
@@ -394,6 +399,7 @@ def make_model_config(
     diffusion_algorithm_name: str = 'mid_point_ode',
     diffusion_temperature_type: str = 'exponential',
     diffusion_temp_index: float = 0.0,
+    diffusion_last_step_only_denoise: bool = True,
     num_recycles: int = 10,
     return_embeddings: bool = False,
     return_distogram: bool = False,
@@ -410,6 +416,9 @@ def make_model_config(
   )
   config.heads.diffusion.eval.algorithm.temp_index = diffusion_temp_index
   config.num_recycles = num_recycles
+  config.heads.diffusion.eval.algorithm.last_step_only_denoise = (
+      diffusion_last_step_only_denoise
+    )
   config.return_embeddings = return_embeddings
   config.return_distogram = return_distogram
   return config
@@ -961,6 +970,7 @@ def main(_):
             diffusion_algorithm_name=_DIFFUSION_ALGORITHM_NAME.value,
             diffusion_temperature_type=_DIFFUSION_TEMPERATURE_TYPE.value,
             diffusion_temp_index=_DIFFUSION_TEMP_INDEX.value,
+            diffusion_last_step_only_denoise=_DIFFUSION_LAST_STEP_ONLY_DENOISE.value,
             num_recycles=_NUM_RECYCLES.value,
             return_embeddings=_SAVE_EMBEDDINGS.value,
             return_distogram=_SAVE_DISTOGRAM.value,
